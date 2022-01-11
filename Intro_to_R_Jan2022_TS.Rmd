@@ -1,0 +1,203 @@
+---
+title: "Introduction to Data Analysis in R"
+output: html_notebook
+---
+
+
+```{r include=FALSE}
+#First some installations
+install.packages(c('quantmod', 'forecast'))
+```
+
+
+
+# Time-series data analysis example
+Let's pull some time-series data using `quantmod` package.
+
+To download an individual time series we use a dedicated function. We downlaod VITAX which is a vanguard mutual fund for the technology sector.
+```{r message=FALSE, warning=FALSE}
+require("quantmod")
+vitax = getSymbols('vitax', from='2005-01-01', to='2022-01-01', auto.assign=FALSE)
+```
+
+And we examine what did we get in return.
+```{r}
+list(
+  'class'=class(vitax),
+  'dimensions'=dim(vitax),
+  'head'=head(vitax, 3)
+)
+```
+The object is of somewhat unfamiliar classes `zoo` and `xts`, however most of the data formats in R easily convert into the familiar `data.frame`. We will also only keep the price at the "Close" of the day and drop remaining columns.
+```{r}
+vitax.df = fortify.zoo(vitax$VITAX.Close) # this is a crazy name for a function (one of the drawbacks of open source development)
+head(vitax.df, 3)
+colnames(vitax.df) = c("date", "y")
+head(vitax.df, 3)
+```
+Potential questions to ask the data (some easy some not so much) list:
+
+* what is the overall value of the technology sector across time?
+* is it susceptible to wide-range economic shocks (2008 lending crash, early 2020 Covid hiatus)?
+* how is the trend changing across time?
+* can we measure the trend and make extrapolations/forecasts?
+  
+First (easy) thing to do is to plot.
+```{r}
+with(vitax.df, plot(date, y, ylab='VITAX price [$]'))
+```
+Definitely trending UP! How about shocks? That's easy, we just need to zoom.
+```{r}
+par(mfrow=c(1,2))
+with(vitax.df, plot(date, y, xlim=as.Date(c("2008-01-01", "2012-01-01")), ylim=c(10,40)))
+with(vitax.df, plot(date, y, xlim=as.Date(c("2020-01-01", "2021-01-01")), ylim=c(80,200)))
+```
+That was easy :) 
+
+Quantification of the trend is going to be more a bit more difficult. At this point most data practitioners use models (aka approximations to reality).
+
+Let's build some simple trend models. 
+
+Initially, we convert the date to a numeric feature. There are 2 ways of doing this:
+```{r}
+head(as.numeric(vitax.df$date), 10)
+head(seq_along(vitax.df$date), 10)
+
+
+vitax.df$time = seq_along(vitax.df$date)
+head(vitax.df)
+```
+The simplest model is a basic linear model.
+
+$y = \beta_0 + \beta_1 \cdot time + \epsilon$
+```{r}
+lin.model = lm(y ~ time, data=vitax.df)
+
+summary(lin.model)
+
+with(vitax.df, plot(time, y))
+lines(predict(lin.model), col='red')
+```
+
+Maybe adding a quadratic or cubic term helps?
+$y = \beta_0 + \beta_1 \cdot time + \beta_2\cdot time^2 + \epsilon$
+
+$y = \beta_0 + \beta_1 \cdot time + \beta_2\cdot time^2 + \beta_3\cdot time^3 + \epsilon$
+```{r}
+quad.model = lm(y ~ time + I(time^2), data=vitax.df)
+summary(quad.model)
+
+cub.model = lm(y ~ time + I(time^2) + I(time^3), data=vitax.df)
+summary(cub.model)
+
+with(vitax.df, plot(time, y))
+lines(predict(lin.model), col='red')
+lines(predict(quad.model), col='green')
+lines(predict(cub.model), col='blue')
+```
+Let's add some higher polynomial terms (up to 6 for now).
+```{r}
+null.model = lm(y ~ 1, data=vitax.df)
+tetr.model = lm(y ~ poly(time, degree=4), data=vitax.df)
+pent.model = lm(y ~ poly(time, degree=5), data=vitax.df)
+hex.model = lm(y ~ poly(time, degree=6), data=vitax.df)
+
+with(vitax.df, plot(time, y))
+lines(predict(hex.model), col='purple')
+```
+A neat way of comparing models that are nested within each other is [ANOVA](https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/anova). Nesting occurs when a more complex model includes the less complex model in its specification. ANOVA shall tell us when to stop adding terms. Eventually we hit the limit of polynomial regression modeling.
+
+Caveat: using ANOVA requires certain assumptions to be met. We will not delve into them now, but it's good to keep in mind that any statistical test is most powerful when the underlying assumptions are met.
+```{r}
+anova(null.model, lin.model, quad.model, cub.model, tetr.model, pent.model, hex.model)
+
+with(vitax.df, plot(time, y))
+lines(predict(pent.model), col='green', lw=3)
+```
+Polynomial regression suggests that a 5th degree polynomial fits the data well.
+```{r}
+summary(pent.model)
+plot(vitax.df$date, pent.model$residuals)
+```
+This doesn't look like such an awesome model, the residuals are bigger for more recent days. But it has a good $R^2$ and maybe we can try to make some extrapolations/forecasts from it.
+```{r}
+future_times = data.frame(time=seq(4281, 4480))
+
+future_values = predict(pent.model, future_times, se.fit=TRUE)
+
+with(vitax.df, plot(time, y, xlim=c(1, 4480), ylim=c(0, 350)))
+lines(future_times$time, future_values$fit, col='blue')
+lines(future_times$time, future_values$fit + future_values$se + future_values$residual.scale, col='blue', lty=2)
+lines(future_times$time, future_values$fit - future_values$se - future_values$residual.scale, col='blue', lty=2)
+
+```
+The forecast seems sensible, altough uncertainty (~$5) is very small and unrealistic at current levels. Additionally the uncertainty does not increase with time (which we would intuitively expect). Finally, the model is not very interpretable, the coefficients values are not meaningful. How can we make the modeling/analysis a bit more transparent? First and foremost the time-series data is strongly correlated, i.e., daily value of a fund depends mostly on its recent history. In time-series one often **transforms** the data prior to analysis. 
+
+Question: What do you think is a sensible transform for a time-series? 
+
+```{r}
+vitax.df$ylag1 = c(NA, vitax.df$y[1:nrow(vitax.df)-1])
+vitax.df$yd = vitax.df$y - vitax.df$ylag1
+vitax.df$yrd = (vitax.df$yd/vitax.df$ylag1) *100
+head(vitax.df)
+with(vitax.df, plot(date, yrd, ylab="Daily Difference [%]", cex=0.5))
+abline(0,0, lty=1, col='green')
+```
+Relative differencing removes the effect of scale and shifts the focus on daily changes.
+```{r}
+hist(vitax.df$yrd, breaks=100, xlab='Daily Diff [%]')
+```
+The distribution of differences is bell-like, although has quite long tails. Since we know that the overall trend is positive, the distribution of differences must be shifted above 0.
+
+
+Question: How can we smooth these differences to see a larger picture?
+```{r}
+# take a relative difference with a larger time window
+
+n=200
+yrd_smooth = (diff(vitax.df$y, n) / vitax.df$y[(n+1):nrow(vitax.df) - n])*100/n
+vitax.df$yrd_smooth = c(rep(NA, n), yrd_smooth)
+
+# plot it
+par(mar=c(5, 4, 4, 6) + 0.1)
+with(vitax.df, plot(date, yrd, cex=0.3, ylab='Daily Diff [%]', las=1, ylim=c(-15,15)))
+abline(0,0, lty=1, col='green')
+par(new=TRUE) # add to the current already filled plot
+with(vitax.df, plot(date, yrd_smooth, col='blue', type='l', axes=F, xlab='', ylab='', ylim=c(-0.45,0.45)))
+# draw separate axes
+mtext('Daily Diff Smoothed [%]', side=4, col='blue', line=4)
+axis(4, col='blue', col.axis='blue', las=1, )
+
+```
+This is a different and quite informative picture of the time-series.
+
+* Longer period derivatives smooth out the noise and better illustrate the pace of growth
+  + tech has been growing fast in various periods 2009-2011 following the 2008 recession
+  + ~2014 and even faster ~2017-2018
+  + post Covid growth is the fastest of all with no strong signs of tapering
+
+#### Time-series dedicated modeling
+
+R has a multitude of dedicated libraries to make predictions on time-series. A common one is called `forecast`.
+
+Auto.arima methodology automatically handles the choice of differentiation and the auto-regressive or smoothing components that best describe the dynamics of a given time series. 
+```{r}
+require(forecast)
+
+# a common rudimentary time-series foreacsting method is ARIMA (autoregressive-integrated-moving-average)
+arima.model = forecast::auto.arima(vitax$VITAX.Close, max.p=3, max.d=1, max.q=3,
+                                   seasonal = FALSE, stationary = FALSE)
+
+# with the fitted model we can make predictions
+arima.forecast = forecast::forecast(arima.model, h=200)
+plot(arima.forecast)
+```
+
+#### Key Points
+1. Every data problem is unique to the process that generated the data, e.g.,
+  + physical process- one needs to know the laws of nature to describe it)
+  + human (or society) induced process - often no or very little valid theories exist
+2. One can model the data in various ways, linear regression is often a good start but may not be very satisfactory and result in an incomprehensible set of coefficients/weights, often dedicated modeling techniques exist for specific data.
+3. Simple transformations may help illustrate useful information even without explicit modeling
+
+

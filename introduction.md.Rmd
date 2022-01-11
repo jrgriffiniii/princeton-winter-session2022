@@ -1,0 +1,297 @@
+---
+title: "Princeton Winter Session 2022: Introduction to Data Analysis in R"
+output: html_notebook
+---
+
+# Data Types in R
+## Vectors
+```{r}
+v1 = c(1,2,3,4,5)
+v1
+```
+
+```{r}
+v2 = c("a", "b", "c", c(3,2,1))
+v2
+```
+
+## Environments in R
+Listing objects for a given environment:
+```{r}
+ls()
+```
+
+Removing objects from the environment:
+```{r}
+rm("v2")
+ls()
+```
+
+## Variables
+Variables require an assignment operator:
+```{r}
+x=10
+x+5
+x
+```
+
+### Arithmetic
+Vector operations:
+```{r}
+v1*x
+```
+
+```{r}
+y = 2 + 3*v1
+y
+```
+
+Finding the length of a vector:
+```{r}
+length(y)
+```
+
+Finding the maximum value in a vector:
+```{r}
+max(y)
+```
+
+Finding the minimum value in a vector:
+```{r}
+min(y)
+```
+
+Finding the arithmetic mean for the values in a vector:
+```{r}
+mean(y)
+```
+
+Exercises:
+
+```{r}
+nums = c(1,2,3,4,5)
+nums_product = nums * 3 + 5
+nums_product
+```
+
+```{r}
+squares = nums^2
+squares
+```
+
+```{r}
+session_objects = ls()
+length(session_objects)
+```
+
+Object introspection:
+
+```{r}
+class(nums)
+```
+
+```{r}
+class("a")
+```
+
+## Boolean data types
+```{r}
+logic1=c(TRUE, TRUE, FALSE, FALSE)
+logic1
+```
+
+```{r}
+class(logic1)
+```
+
+Expressions can evaluate into boolean vector results:
+```{r}
+logic2 = v1 > 2
+logic2
+```
+
+Finding the summation for all elements within a vector:
+```{r}
+sum(logic2)
+```
+
+```{r}
+mean(logic2)
+```
+
+```{r}
+sum(v1>2)
+```
+
+## Exercises
+
+```{r}
+cursor = ls()
+class(cursor)
+```
+
+```{r}
+max1 = max(v1)
+class(max1)
+```
+
+```{r}
+max2 = max(logic1)
+class(max2)
+```
+
+```{r}
+big_nums = nums < mean(nums)
+big_nums
+```
+
+## Elements in vectors
+
+Elements can be referenced by their indices:
+```{r}
+nums[1]
+```
+```{r}
+nums[5]
+```
+
+Indices out of range for a vector will return a `NA` value:
+```{r}
+nums[6]
+```
+
+## Subsets of vectors
+
+Vectors containing a subset of specific elements within a vector can be created:
+```{r}
+nums[1:4]
+nums[c(1,2,3)]
+nums[c(3,3,3)]
+```
+
+# Data Frames
+
+## Data sets in R
+Displaying the data sets available in R:
+```{r}
+data()
+```
+
+Loading a data set into the global scope:
+```{r}
+data(precip)
+precip
+```
+
+```{r}
+class(precip)
+```
+
+## Creating data frames
+Creating a data frame from the data set:
+
+```{r}
+names(precip)
+# Create the first column "city" with the names column and row values populating this
+df = data.frame(city=names(precip), value=precip)
+```
+
+String representation of the data frame:
+
+```{r}
+str(df)
+```
+
+Rendering a table interface for the data frame:
+```{r}
+View(df)
+```
+
+## Selecting elements within a data frame
+Selecting the first row and first column
+```{r}
+df[1,1]
+```
+
+Selecting the first row and all columns
+```{r}
+df[14,]
+```
+
+Selecting a subset of rows and all columns:
+```{r}
+df[2:6,]
+```
+
+Selecting the first six rows of the data frame:
+
+```{r}
+head(df)
+```
+
+Selecting the last six rows of the data frame:
+
+```{r}
+tail(df)
+```
+
+Accessing all row values within a specified column:
+
+```{r}
+df$city
+```
+
+Filtering the rows by the value in a single column:
+```{r}
+df[df$city == "Portland",]
+```
+
+Filtering the rows by an arithmetic expression:
+```{r}
+df[df$value > 50,]
+```
+
+# Plotting Visualizations
+
+Generating a scatterplot for the row values within a column:
+```{r}
+plot(df$value)
+```
+
+Generating a line plot for the row values:
+```{r}
+plot(df$value, type='l')
+```
+
+Generating a histogram plot for the row values:
+```{r}
+hist(df$value)
+```
+
+Data frame attributes:
+
+Inspecting the attributes of a data frame:
+
+```{r}
+?data.frame
+```
+
+Retrieving the column names for a data frame:
+
+```{r}
+colnames(df)
+```
+
+Casting variables into different data types
+
+```{r}
+s = "Princeton"
+class(s)
+```
+
+For invalid values (e. g. casting `characters` to `integers`) only a `NA` is returned:
+```{r}
+as.numeric(s)
+s2 = "123"
+as.numeric(s2)
+```

@@ -1,0 +1,258 @@
+---
+title: "Introduction to Data Analysis in R - Machine Learning Workflow"
+output: html_notebook
+---
+
+
+```{r include=FALSE}
+#First some installations of external libraries that we will be using here.
+install.packages(c('caret', 'doParallel', 'pROC', 'randomForest', 'kernlab', 'glmnet'))
+```
+
+
+# Machine Learning Example
+Machine learning has been a very popular way of building predictive models. It's popularity is largely due to the simplicity of the modeling process.
+
+## Oral toxicity dataset
+We will be using a publicly available data set of oral toxicity of a set of ~10k compounds. Each compound is described by presence or absence of 1024 structural features. 
+
+### Data download 
+```{r message=FALSE}
+temp=tempfile()
+download.file("https://archive.ics.uci.edu/ml/machine-learning-databases/00508/qsar_oral_toxicity.zip", temp)
+tox = read.csv(unz(temp, "qsar_oral_toxicity.csv"), sep=";")
+unlink(temp)
+```
+
+
+Let's take a brief look at the data
+```{r}
+list(
+  dim=dim(tox),
+  outcome=table(tox$negative)
+)
+```
+```{r}
+head(tox, 2)
+head(tox[, order(ncol(tox):1)], 2)
+```
+We confirm that we have 1024 binary features and one target (positive/negative). The dataset is heavily imbalanced, only 8% of compounds are toxic.
+
+
+## ML modeling pipeline
+
+There are literally hundrends of libraries that we can use. A good starting set of tools is in `caret` and I recommend using it. The [documentation](https://topepo.github.io/caret/) is excellent, and reading it on its own is like a Machine Learning course. 
+
+In fact `caret` is so good, that Python folk are now trying to replicate it with py-caret.
+
+```{r}
+require(caret)
+
+
+# parallel registration
+require(doParallel)
+cl = makePSOCKcluster(detectCores() - 1)
+registerDoParallel(cl)
+```
+
+Let's check for missing values and deduplicate the data. It's often the first step of any analysis.
+```{r}
+anyNA(tox)
+dupes = duplicated(tox)
+sum(dupes)
+tox = tox[!dupes,]
+```
+
+### Splitting data
+The data is always split into train/validation/test sets. Let's first split into train/test. We will then split the train when we discuss why we need the validation set.
+```{r}
+tIdx = createDataPartition(tox$negative, p=0.75, list=F)
+length(tIdx)
+head(tIdx, 10)
+```
+
+Let's take a look at the positive/negative rates in our training/testing samples (we'd like them to be the same).
+```{r}
+table(tox[tIdx, "negative"])
+table(tox[-tIdx, "negative"])
+```
+We now **_completely forget_** about the testing data. As if it _didn't exist_. We will get back to it after all models are trained and cross-checked.
+
+```{r}
+train.data = tox[tIdx,]
+train.X = train.data[, 1:(ncol(train.data) - 1)]
+train.y = train.data["negative"]
+
+
+test.data = tox[-tIdx,]
+test.X = test.data[, 1:(ncol(test.data) - 1)]
+test.y = test.data["negative"]
+```
+
+
+### Pre-processing
+
+Pre-processing aims to reduce the complexity of the features so that the ML models train easier. Most often **_domain knowledge_** allows one to perform at least some pre-processing.
+
+```{r}
+#Let's check if there are any features that occur only 1-time in the dataset. These are obviously not going to be predictive, because one can't generalize from a feature seen only once.
+any(colSums(train.X) == 1)
+
+# Let's check if there are features that are present for every sample
+any(colSums(train.X) == nrow(train.X))
+
+# Let's see if some features are duplicates of other features?
+any(duplicated(t(train.X)))
+
+# Let's see if some of the input sampels (both X and y) are duplicates
+any(duplicated(train.data))
+```
+Question:
+
+Why is pre-processing done after the data was split into train/test?
+
+Answer:
+If we start selecting features, this can introduce bias into the test set (hence, overfitting or underfitting the model).
+
+### Cross-validation.
+
+Machine learning models require some level of control while training to limit the effect of overfitting. Overfitting arises because in ML one typically uses many many features and a flexible model formulation, so without _control_ the models would simply replicate the training data, while not learn anything. The degrees of freedom of the fit are often larger than the data set itself so _control_ is a must.
+
+```{r}
+
+samples = createDataPartition(train.data$negative, p=0.75, times=5, list=TRUE)
+
+ctrl = trainControl(method='LGOCV',
+                    p=0.75,
+                    number=5,
+                    index=samples,
+                    sampling='down', # this is critical when handling class imbalance problems
+                    classProbs=TRUE,
+                    summaryFunction=twoClassSummary,
+                    savePredictions=TRUE
+                    )
+```
+
+There is a lot happening in this _control_. So let's talk over it.
+
+A brief note on the evaluation metrics
+\[
+Specificity = 1 - \frac{False Positives}{Positives}
+\\
+Sensitivity = 1 - \frac{False Negatives}{Negatives}
+\]
+
+It's always possible to make Specificity or Sensitivity 1, but not both. ROC curve (and it's area under curve [AUC]) determines how well we can balance good sensitivity with good specificity.
+
+### Model training with overfitting control
+
+We will train a handful of models. The control is used to choose an appropriate set of hyper-parameters. For each modeling method the list of hyper-parameters can be checked with
+`caret::modelLookup(model_name)`.
+
+
+First `random forest`.
+```{r}
+require('randomForest')
+modelLookup('rf')
+rf.model = train(negative ~ ., data=train.data, method='rf', trControl=ctrl,
+                 metric='ROC', ntree=10, tuneGrid=expand.grid(mtry=c(2,5,10,15,20)))
+rf.model
+plot(rf.model)
+```
+
+Then `support vector machines`. All it takes in `caret` is to change the `method` and adapt the hyperparameters.
+```{r}
+require('kernlab')
+modelLookup('svmRadialCost')
+svm.model = train(negative ~ ., data=train.data, method='svmRadialCost', trControl=ctrl,
+                 metric='ROC', tuneGrid=expand.grid(C=c(0.5, 1, 1.5, 2)))
+svm.model
+plot(svm.model)
+```
+
+Now the simplest linear model `glmnet` which stands for Elastic-Net Regression.
+```{r}
+require('glmnet')
+modelLookup('glmnet')
+glmnet.model = train(negative ~ ., data=train.data, method='glmnet', trControl=ctrl,
+                 metric='ROC', tuneGrid=expand.grid(alpha=1,
+                                                    lambda=c(0.00001, 0.0001, 0.001, 
+                                                             0.005, 0.01, 0.03, 0.05)))
+glmnet.model
+plot(glmnet.model)
+```
+
+`Caret` provides plenty of libraries to compare models based on their performance in cross-validation.
+```{r}
+# first we combine the models into a list
+models=list(rf=rf.model, svm=svm.model, lasso=glmnet.model)
+# extract the prediction information from the cross-validation resampling
+resamps = resamples(models)
+# plot
+bwplot(resamps)
+```
+Overall SVM tends to narrowly win.
+
+
+**This is very typical to machine learning problems: many algorithms will perform similarly. What limits the performance is the relevant information stored in the features, and not the algorithm that's used to build the model.**
+
+
+Question: how do we choose the final model (let's say for publication?)
+
+```{r}
+# Caret offers a way to take a look at differences between models. This is nuanced from a statistics point of view that we will not get into here.
+resamps.diff = diff(resamps)
+dotplot(resamps.diff, metric='ROC')
+```
+```{r}
+dotplot(resamps.diff, metric='Sens')
+```
+
+### Final evaluation of the model
+This is always done on a test set that hasn't been used in any modeling decision, to remain unbiased.
+
+```{r}
+probs = extractProb(models, testX = test.X, testY = test.y$negative)
+head(probs,6)
+```
+
+```{r}
+head(probs,50)
+```
+
+
+Let's plot some ROC curves for our models.
+```{r}
+require(pROC)
+probs.test.svm = probs[probs$dataType=='Test' & probs$model=='svmRadialCost', ]
+probs.train.svm = probs[probs$dataType=='Training' & probs$model=='svmRadialCost', ]
+
+roc.svm.test = pROC::roc(probs.test.svm$obs, probs.test.svm$negative)
+roc.svm.train = pROC::roc(probs.train.svm$obs, probs.train.svm$negative)
+plot.roc(roc.svm.test, print.auc=TRUE, col='red')
+plot.roc(roc.svm.train, print.auc=TRUE, add=TRUE, col='blue', print.auc.adj=c(0,0))
+
+```
+
+```{r}
+probs.test.svm = probs[probs$dataType=='Test' & probs$model=='svmRadialCost', ]
+probs.test.rf = probs[probs$dataType=='Test' & probs$model=='rf', ]
+probs.test.lasso = probs[probs$dataType=='Test' & probs$model=='glmnet', ]
+
+roc.svm.test = pROC::roc(probs.test.svm$obs, probs.test.svm$negative)
+roc.rf.test = pROC::roc(probs.test.rf$obs, probs.test.rf$negative)
+roc.lasso.test = pROC::roc(probs.test.lasso$obs, probs.test.lasso$negative)
+
+plot.roc(roc.svm.test, print.auc=TRUE, col='red')
+plot.roc(roc.rf.test, print.auc=TRUE, add=TRUE, col='blue', print.auc.adj=c(-1,2))
+plot.roc(roc.lasso.test, print.auc=TRUE, add=TRUE, col='green', print.auc.adj=c(1,0))
+
+```
+
+Finally, let's print the confusion matrix and other metric of our top models on the test set.
+```{r}
+confusionMatrix(probs.test.svm$pred, probs.test.svm$obs)
+```
+```{r}
+confusionMatrix(probs.test.rf$pred, probs.test.rf$obs)
+```
