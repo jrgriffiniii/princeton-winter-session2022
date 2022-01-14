@@ -3,7 +3,7 @@ RStudio Notebooks for a 2022 Princeton Winter Session workshop
 
 ## Requirements
 
-* [R](https://cran.r-project.org/bin/macosx/)
+* [R](https://www.r-project.org/)
 * [RStudio](https://www.rstudio.com/)
 
 ## Notebooks
